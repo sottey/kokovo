@@ -1,14 +1,15 @@
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from .auth import require_api_key
 from .config import Settings, get_settings
-from .generator import FORMAT_DETAILS, GeneratorError, ImageGenerator, as_base64, store_image
+from .generator import FORMAT_DETAILS, GeneratorError, ImageGenerator, as_base64, latest_output_url, store_image
 from .schemas import GenerationRequest, GenerationResponse, HealthResponse, ImageData
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -28,10 +29,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Kokovo", version="0.1.0", lifespan=lifespan)
+HOME_TEMPLATE = Path(__file__).parent / "static" / "index.html"
 
 
 def settings_dependency() -> Settings:
     return get_settings()
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def home(settings: Settings = Depends(settings_dependency)) -> HTMLResponse:
+    latest_url = latest_output_url(settings.output_dir) or ""
+    page = HOME_TEMPLATE.read_text(encoding="utf-8").replace("{{LATEST_IMAGE_URL}}", latest_url)
+    return HTMLResponse(page)
 
 
 @app.get("/health", response_model=HealthResponse)

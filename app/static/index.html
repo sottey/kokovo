@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kokovo</title>
+  <style>
+    :root { color-scheme: dark; --ink: #ecf0e9; --muted: #98a59d; --base: #14211f; --panel: #1b2b28; --line: #365049; --green: #d5f06a; --error: #ffb4a7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 74% 12%, #294943 0, transparent 29rem), var(--base); color: var(--ink); font-family: ui-rounded, "Avenir Next", Avenir, sans-serif; }
+    main { width: min(1160px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 3rem; }
+    header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid var(--line); padding-bottom: 1.1rem; margin-bottom: 1.8rem; }
+    h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.8rem); letter-spacing: -.07em; font-weight: 750; }
+    header a { color: var(--muted); font-size: .9rem; }
+    .workspace { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(0, 1.2fr); gap: 1.5rem; align-items: start; }
+    .composer { padding: 1.25rem; border: 1px solid var(--line); background: rgba(27, 43, 40, .82); }
+    .composer p { color: var(--muted); line-height: 1.45; margin: 0 0 1.2rem; }
+    label { display: block; margin: 1rem 0 .38rem; color: var(--muted); font-size: .83rem; }
+    input, textarea, select { width: 100%; color: var(--ink); background: #10201d; border: 1px solid var(--line); border-radius: .25rem; padding: .68rem .75rem; font: inherit; }
+    textarea { min-height: 9rem; resize: vertical; line-height: 1.4; }
+    .settings { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+    button { width: 100%; margin-top: 1.25rem; border: 0; border-radius: .25rem; padding: .82rem 1rem; font: 700 1rem inherit; color: #182116; background: var(--green); cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .65; }
+    #status { min-height: 1.3rem; margin: .85rem 0 0; color: var(--muted); font-size: .9rem; }
+    #status.error { color: var(--error); }
+    .latest { min-height: 25rem; background: rgba(10, 20, 18, .5); border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; }
+    .latest img { width: 100%; height: auto; display: block; }
+    .empty { max-width: 22rem; padding: 2rem; text-align: center; color: var(--muted); line-height: 1.5; }
+    .latest-label { margin: 0 0 .7rem; color: var(--muted); font-size: .83rem; }
+    @media (max-width: 720px) { main { padding-top: 1.25rem; } .workspace { grid-template-columns: 1fr; } .latest { min-height: 18rem; } }
+    @media (prefers-reduced-motion: no-preference) { .latest img { animation: appear .3s ease-out; } @keyframes appear { from { opacity: .2; transform: scale(.99); } to { opacity: 1; transform: scale(1); } } }
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>Kokovo</h1><a href="/docs">API docs</a></header>
+    <section class="workspace">
+      <form class="composer" id="generate-form">
+        <p>Describe an image. Kokovo makes one and keeps the latest result here.</p>
+        <label for="api-key">API key</label>
+        <input id="api-key" type="password" autocomplete="off" required>
+        <label for="prompt">Prompt</label>
+        <textarea id="prompt" required placeholder="A fox sitting in a moonlit forest, cinematic"></textarea>
+        <label for="negative-prompt">Avoid (optional)</label>
+        <input id="negative-prompt" type="text" placeholder="text, watermark, blurry">
+        <div class="settings">
+          <div><label for="size">Size</label><select id="size"><option value="512">512 × 512</option><option value="768">768 × 768</option><option value="1024">1024 × 1024</option></select></div>
+          <div><label for="steps">Steps</label><select id="steps"><option value="4">4 — quick</option><option value="2">2 — fastest</option><option value="6">6 — slower</option></select></div>
+        </div>
+        <button id="generate" type="submit">Generate image</button>
+        <p id="status" role="status"></p>
+      </form>
+      <section>
+        <p class="latest-label">Most recent image</p>
+        <div class="latest" id="latest">
+          <img id="latest-image" src="{{LATEST_IMAGE_URL}}" alt="Most recently generated image" hidden>
+          <p class="empty" id="empty">Your next image will appear here.</p>
+        </div>
+      </section>
+    </section>
+  </main>
+  <script>
+    const form = document.querySelector('#generate-form');
+    const button = document.querySelector('#generate');
+    const status = document.querySelector('#status');
+    const image = document.querySelector('#latest-image');
+    const empty = document.querySelector('#empty');
+    function showImage(url) { image.src = url + '?v=' + Date.now(); image.hidden = false; empty.hidden = true; }
+    if (image.getAttribute('src')) showImage(image.getAttribute('src'));
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      button.disabled = true; button.textContent = 'Generating…'; status.textContent = 'Rendering image…'; status.className = '';
+      const size = Number(document.querySelector('#size').value);
+      const payload = { prompt: document.querySelector('#prompt').value, negative_prompt: document.querySelector('#negative-prompt').value || null, width: size, height: size, num_inference_steps: Number(document.querySelector('#steps').value), guidance_scale: 0, num_images: 1, output_format: 'png', response_format: 'url' };
+      try {
+        const response = await fetch('/v1/images/generations', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + document.querySelector('#api-key').value }, body: JSON.stringify(payload) });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || 'Generation failed');
+        showImage(body.data[0].url); status.textContent = 'Image ready.';
+      } catch (error) { status.textContent = error.message; status.className = 'error'; }
+      finally { button.disabled = false; button.textContent = 'Generate image'; }
+    });
+  </script>
+</body>
+</html>

@@ -150,3 +150,18 @@ def store_image(image: Image.Image, output_format: str, seed: int, request: Gene
 def as_base64(image: Image.Image, output_format: str) -> tuple[str, str]:
     payload, mime_type = image_bytes(image, output_format)
     return base64.b64encode(payload).decode("ascii"), mime_type
+
+
+def latest_output_url(output_dir: Path) -> str | None:
+    """Return the newest generated image as a URL relative to this service."""
+    if not output_dir.is_dir():
+        return None
+    images = (
+        path
+        for path in output_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    )
+    newest = max(images, key=lambda path: path.stat().st_mtime, default=None)
+    if newest is None:
+        return None
+    return f"/outputs/{newest.relative_to(output_dir).as_posix()}"
