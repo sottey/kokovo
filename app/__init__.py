@@ -1,0 +1,1 @@
+"""Kokovo image generation API."""
