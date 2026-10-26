@@ -3,9 +3,14 @@ services:
     build: .
     env_file: .env
     ports:
-      - "8000:8000"
+      - "192.168.7.215:8088:8000"
     volumes:
-      - ./outputs:/app/outputs
-      - ./models:/app/models
+      - /home/sottey/docker-data/kokovo-data/outputs:/app/outputs
+      - /home/sottey/docker-data/kokovo-data/models:/app/models
     gpus: all
     restart: unless-stopped
+    labels:
+      - homepage.group=Strongbox
+      - homepage.name=(8088) Kokovo
+      - homepage.icon=sh-argus.png
+      - homepage.href=http://192.168.7.215:8088/outputs
