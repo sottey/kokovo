@@ -19,12 +19,16 @@ class GenerationRequest(BaseModel):
     scheduler: str | None = Field(default=None, max_length=80)
     clip_skip: int | None = Field(default=None, ge=1, le=12)
     high_noise_frac: float | None = Field(default=None, gt=0, le=1)
+    reference_image: str | None = Field(default=None, max_length=14_000_000)
+    reference_strength: float = Field(default=0.5, gt=0, le=1)
 
     @model_validator(mode="after")
     def validate_dimensions(self) -> "GenerationRequest":
         for name, value in (("width", self.width), ("height", self.height)):
             if value is not None and value % 8:
                 raise ValueError(f"{name} must be divisible by 8")
+        if self.reference_image and self.num_inference_steps * self.reference_strength < 1:
+            raise ValueError("num_inference_steps * reference_strength must be at least 1 when using a reference image")
         return self
 
 

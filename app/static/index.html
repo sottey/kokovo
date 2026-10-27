@@ -43,9 +43,12 @@
         <textarea id="prompt" required placeholder="A fox sitting in a moonlit forest, cinematic"></textarea>
         <label for="negative-prompt">Avoid (optional)</label>
         <input id="negative-prompt" type="text" placeholder="text, watermark, blurry">
+        <label for="reference-image">Reference image (optional)</label>
+        <input id="reference-image" type="file" accept="image/png,image/jpeg,image/webp">
         <div class="settings">
           <div><label for="size">Size</label><select id="size"><option value="512x512">512 × 512</option><option value="768x768">768 × 768</option><option value="1024x1024">1024 × 1024</option><option value="1024x576">1024 × 576 (16:9)</option><option value="576x1024">576 × 1024 (9:16)</option><option value="1024x768">1024 × 768 (4:3)</option></select></div>
           <div><label for="steps">Steps</label><select id="steps"><option value="1">1</option><option value="2">2</option><option value="4" selected>4</option><option value="8">8</option><option value="16">16</option><option value="32">32</option></select></div>
+          <div><label for="reference-strength">Reference strength</label><select id="reference-strength"><option value="0.25">0.25 — subtle</option><option value="0.5" selected>0.5 — balanced</option><option value="0.75">0.75 — strong</option><option value="1">1 — remake</option></select></div>
         </div>
         <button id="generate" type="submit">Generate image</button>
         <p id="status" role="status"></p>
@@ -66,13 +69,23 @@
     const image = document.querySelector('#latest-image');
     const empty = document.querySelector('#empty');
     function showImage(url) { image.src = url + '?v=' + Date.now(); image.hidden = false; empty.hidden = true; }
+    function readImageFile(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(new Error('Could not read the reference image')); reader.readAsDataURL(file); }); }
     if (image.getAttribute('src')) showImage(image.getAttribute('src'));
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       button.disabled = true; button.textContent = 'Generating…'; status.textContent = 'Rendering image…'; status.className = '';
       const [width, height] = document.querySelector('#size').value.split('x').map(Number);
-      const payload = { prompt: document.querySelector('#prompt').value, negative_prompt: document.querySelector('#negative-prompt').value || null, width, height, num_inference_steps: Number(document.querySelector('#steps').value), guidance_scale: 0, num_images: 1, output_format: 'png', response_format: 'url' };
+      const steps = Number(document.querySelector('#steps').value);
+      const referenceStrength = Number(document.querySelector('#reference-strength').value);
+      const referenceFile = document.querySelector('#reference-image').files[0];
+      const payload = { prompt: document.querySelector('#prompt').value, negative_prompt: document.querySelector('#negative-prompt').value || null, width, height, num_inference_steps: steps, guidance_scale: 0, num_images: 1, output_format: 'png', response_format: 'url' };
       try {
+        if (referenceFile) {
+          if (steps * referenceStrength < 1) throw new Error('Choose enough steps for the selected reference strength');
+          status.textContent = 'Reading reference image…';
+          payload.reference_image = await readImageFile(referenceFile);
+          payload.reference_strength = referenceStrength;
+        }
         const response = await fetch('/v1/images/generations', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + document.querySelector('#api-key').value }, body: JSON.stringify(payload) });
         const body = await response.json();
         if (!response.ok) throw new Error(body.detail || 'Generation failed');

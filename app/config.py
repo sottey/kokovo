@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     max_height: int = Field(default=1536, ge=64)
     max_steps: int = Field(default=50, ge=1)
     max_images: int = Field(default=4, ge=1)
+    max_reference_image_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
+    max_reference_image_pixels: int = Field(default=20_000_000, ge=1)
     save_metadata: bool = True
 
     @field_validator("torch_dtype")

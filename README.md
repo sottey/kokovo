@@ -56,6 +56,12 @@ curl http://localhost:8000/v1/images/generations \
 
 The optional `scheduler` accepts `ddim`, `dpmpp_2m`, `euler`, or `euler_a`. Scheduler compatibility depends on the selected model.
 
+## Reference images
+
+With the default SDXL Turbo model, Kokovo can use an uploaded image as an image-to-image reference. In the browser, select a PNG, JPEG, or WebP file and choose its reference strength. The uploaded source is used only for that request and is not stored; generated-image metadata records only whether a reference was used and its strength.
+
+API clients may provide `reference_image` as either a base64 string or a base64 data URL, plus `reference_strength` between `0` and `1`. For SDXL Turbo, `num_inference_steps * reference_strength` must be at least `1`. Reference images are center-cropped to the selected output ratio. `MAX_REFERENCE_IMAGE_BYTES` and `MAX_REFERENCE_IMAGE_PIXELS` limit accepted uploads.
+
 When `response_format` is `url`, use the returned relative URL at this service, for example `http://localhost:8000/outputs/2026/10/26/<uuid>.png`.
 
 ## Local development

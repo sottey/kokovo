@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import binascii
 import io
 import json
 import logging
@@ -10,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .config import Settings
 from .schemas import GenerationRequest
@@ -38,13 +39,14 @@ class ImageGenerator:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.pipeline: Any | None = None
+        self.image_pipeline: Any | None = None
         self.ready = False
         self._lock = asyncio.Lock()
 
     def load(self) -> None:
         try:
             import torch
-            from diffusers import AutoPipelineForText2Image
+            from diffusers import AutoPipelineForImage2Image, AutoPipelineForText2Image
         except ImportError as error:
             raise GeneratorError("Diffusers dependencies are not installed") from error
         if self.settings.device == "cuda" and not torch.cuda.is_available():
@@ -68,6 +70,10 @@ class ImageGenerator:
             except Exception as error:
                 raise GeneratorError("XFORMERS_ENABLED=true but xformers could not be enabled") from error
         self.pipeline = pipeline
+        try:
+            self.image_pipeline = AutoPipelineForImage2Image.from_pipe(pipeline)
+        except Exception:
+            logger.warning("model does not support image-to-image generation model_id=%s", self.settings.model_id, exc_info=True)
         self.ready = True
         logger.info("model loaded model_id=%s", self.settings.model_id)
 
@@ -90,15 +96,23 @@ class ImageGenerator:
             raise GeneratorError(f"num_images must not exceed {self.settings.max_images}")
         base_seed = request.seed if request.seed is not None else secrets.randbelow(2**63 - 1)
         generators = [torch.Generator(device=self.settings.device).manual_seed(base_seed + index) for index in range(request.num_images)]
+        pipeline = self.pipeline
+        if request.reference_image:
+            if self.image_pipeline is None:
+                raise GeneratorError("The configured model does not support reference images")
+            pipeline = self.image_pipeline
         if request.scheduler:
-            self._set_scheduler(request.scheduler)
+            self._set_scheduler(request.scheduler, pipeline)
         kwargs: dict[str, Any] = {"prompt": request.prompt, "negative_prompt": request.negative_prompt, "width": width, "height": height, "num_inference_steps": request.num_inference_steps, "guidance_scale": request.guidance_scale, "num_images_per_prompt": request.num_images, "generator": generators}
+        if request.reference_image:
+            kwargs["image"] = self._reference_image(request.reference_image, width, height)
+            kwargs["strength"] = request.reference_strength
         for field in ("prompt_2", "negative_prompt_2", "clip_skip", "high_noise_frac"):
             if (value := getattr(request, field)) is not None:
                 kwargs[field] = value
         try:
             with torch.inference_mode():
-                result = self.pipeline(**kwargs)
+                result = pipeline(**kwargs)
         except torch.cuda.OutOfMemoryError as error:
             torch.cuda.empty_cache()
             raise GeneratorError("CUDA out of memory; reduce dimensions, steps, or image count") from error
@@ -106,7 +120,7 @@ class ImageGenerator:
             raise GeneratorError("Image generation failed") from error
         return [GeneratedImage(image=image, seed=base_seed + index) for index, image in enumerate(result.images)]
 
-    def _set_scheduler(self, name: str) -> None:
+    def _set_scheduler(self, name: str, pipeline: Any) -> None:
         from diffusers import DDIMScheduler, DPMSolverMultistepScheduler, EulerAncestralDiscreteScheduler, EulerDiscreteScheduler
 
         scheduler_types = {
@@ -119,7 +133,31 @@ class ImageGenerator:
         if scheduler_type is None:
             allowed = ", ".join(sorted(scheduler_types))
             raise GeneratorError(f"Unsupported scheduler {name!r}; choose one of: {allowed}")
-        self.pipeline.scheduler = scheduler_type.from_config(self.pipeline.scheduler.config)
+        pipeline.scheduler = scheduler_type.from_config(pipeline.scheduler.config)
+
+    def _reference_image(self, encoded_image: str, width: int, height: int) -> Image.Image:
+        payload_text = encoded_image
+        if encoded_image.startswith("data:"):
+            try:
+                header, payload_text = encoded_image.split(",", 1)
+            except ValueError as error:
+                raise GeneratorError("Reference image must be a valid base64 data URL") from error
+            if ";base64" not in header.lower():
+                raise GeneratorError("Reference image must be base64 encoded")
+        try:
+            payload = base64.b64decode(payload_text, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise GeneratorError("Reference image must be valid base64") from error
+        if not payload or len(payload) > self.settings.max_reference_image_bytes:
+            raise GeneratorError(f"Reference image must be no larger than {self.settings.max_reference_image_bytes} bytes")
+        try:
+            with Image.open(io.BytesIO(payload)) as source:
+                if source.width * source.height > self.settings.max_reference_image_pixels:
+                    raise GeneratorError(f"Reference image must contain no more than {self.settings.max_reference_image_pixels} pixels")
+                source.load()
+                return ImageOps.fit(source.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS)
+        except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as error:
+            raise GeneratorError("Reference image must be a valid image file") from error
 
 
 def image_bytes(image: Image.Image, output_format: str) -> tuple[bytes, str]:
@@ -142,7 +180,7 @@ def store_image(image: Image.Image, output_format: str, seed: int, request: Gene
     payload, _ = image_bytes(image, output_format)
     target.write_bytes(payload)
     if settings.save_metadata:
-        metadata = {"created_at": now.isoformat(), "model_id": settings.model_id, "seed": seed, "prompt": request.prompt, "negative_prompt": request.negative_prompt, "width": request.width or settings.default_width, "height": request.height or settings.default_height, "num_inference_steps": request.num_inference_steps, "guidance_scale": request.guidance_scale}
+        metadata = {"created_at": now.isoformat(), "model_id": settings.model_id, "seed": seed, "prompt": request.prompt, "negative_prompt": request.negative_prompt, "width": request.width or settings.default_width, "height": request.height or settings.default_height, "num_inference_steps": request.num_inference_steps, "guidance_scale": request.guidance_scale, "reference_image_used": bool(request.reference_image), "reference_strength": request.reference_strength if request.reference_image else None}
         target.with_suffix(target.suffix + ".json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     return f"/outputs/{relative_dir.as_posix()}/{filename}"
 

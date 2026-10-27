@@ -17,6 +17,16 @@ def test_generation_request_allows_supported_format():
     assert request.output_format == "webp"
 
 
+def test_reference_image_requires_enough_effective_steps():
+    with pytest.raises(ValidationError, match="reference_strength"):
+        GenerationRequest(prompt="test", reference_image="dGVzdA==", reference_strength=0.5, num_inference_steps=1)
+
+
+def test_reference_image_allows_enough_effective_steps():
+    request = GenerationRequest(prompt="test", reference_image="dGVzdA==", reference_strength=0.5, num_inference_steps=2)
+    assert request.reference_strength == 0.5
+
+
 def test_api_key_rejects_missing_credentials():
     with pytest.raises(HTTPException) as error:
         require_api_key(credentials=None, settings=Settings(api_key="secret"))
