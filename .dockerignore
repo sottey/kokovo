@@ -1,0 +1,14 @@
+# Only the runtime application and requirements belong in the Docker build.
+# In particular, models and outputs are mounted at runtime and can be many GB.
+.git/
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tests/
+internal_docs/
+prompt_fix/
+outputs/
+models/
+*.log
